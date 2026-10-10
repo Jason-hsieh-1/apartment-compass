@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Apartment Compass</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏠</text></svg>">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="top">
+    <div class="wrap top-inner">
+      <h1>Apartment Compass <span class="sub">Germany · buy</span></h1>
+      <button id="aiSettingsBtn" class="link" title="AI settings (Gemini API key)">⚙ AI settings</button>
+      <nav id="tabs" role="tablist">
+        <button role="tab" data-tab="search" class="active">1 · Search</button>
+        <button role="tab" data-tab="shortlist">2 · Shortlist <span id="count" class="pill">0</span></button>
+        <button role="tab" data-tab="analysis">3 · Analysis</button>
+      </nav>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <!-- ============ SEARCH ============ -->
+    <section id="tab-search" class="tab active">
+      <div class="card">
+        <h2>Your requirements</h2>
+        <p class="muted">Set your criteria once. We build the matching search for each portal and open it in a new tab. Browse there, then paste interesting listings into your Shortlist.</p>
+        <form id="searchForm" class="grid">
+          <label>Federal state
+            <select id="s_state"></select>
+          </label>
+          <label>City (optional)
+            <input id="s_city" type="text" placeholder="e.g. Munich">
+          </label>
+          <span class="spacer"></span>
+          <label>Min price (€)<input id="s_pmin" type="number" min="0" step="5000" inputmode="numeric"></label>
+          <label>Max price (€)<input id="s_pmax" type="number" min="0" step="5000" inputmode="numeric"></label>
+          <span class="spacer"></span>
+          <label>Min size (m²)<input id="s_smin" type="number" min="0" step="0.01" inputmode="decimal"></label>
+          <label>Max size (m²)<input id="s_smax" type="number" min="0" step="0.01" inputmode="decimal"></label>
+          <span class="spacer"></span>
+          <label>Min rooms<input id="s_rmin" type="number" min="0" step="0.5" inputmode="decimal"></label>
+          <label>Max rooms<input id="s_rmax" type="number" min="0" step="0.5" inputmode="decimal"></label>
+        </form>
+      </div>
+
+      <div class="card">
+        <h2>Open the search on…</h2>
+        <div id="portalLinks" class="portals"></div>
+        <p class="muted small">These links open the portals' own search pages. Their URL formats can change, and some filters may need to be re-checked on the portal itself. Always confirm the filters shown there.</p>
+      </div>
+    </section>
+
+    <!-- ============ SHORTLIST ============ -->
+    <section id="tab-shortlist" class="tab">
+      <div class="card">
+        <div class="row between wrap-row">
+          <h2>Shortlist &amp; comparison</h2>
+          <div class="row gap">
+            <button id="readBtn" class="primary" title="Fill in an apartment automatically from its exposé PDF">📄 Read exposé (PDF)</button>
+            <input id="readFile" type="file" accept="application/pdf,.pdf" hidden>
+            <button id="addBtn">+ Add manually</button>
+            <button id="exportBtn">Export</button>
+            <label class="btn">Import<input id="importFile" type="file" accept="application/json" hidden></label>
+          </div>
+        </div>
+        <p class="muted small">Figures use the assumptions from the Analysis tab (equity, interest, repayment…). Click a column header to sort. Rent, Hausgeld and state are needed for yield figures. Data is stored only in this browser. Use Export / Import to move it between devices or share with a friend.</p>
+        <div id="aiStatus" role="status" aria-live="polite" hidden></div>
+        <div id="listTools" class="tools" hidden>
+          <input id="q" type="search" placeholder="Search city, Stadtteil, postcode, title… (min. 2 characters)" aria-label="Search shortlist" autocomplete="off">
+          <button id="filterBtn" type="button">Filter <span id="filterCount" class="pill" hidden>0</span></button>
+          <label class="sortlbl">Sort by <select id="sortSel"></select></label>
+        </div>
+        <div id="resultInfo" class="small muted"></div>
+        <div id="noMatch" class="empty" hidden>No apartments match your search or filters. <button id="clearAll" type="button" class="link">Clear search &amp; filters</button></div>
+        <div id="emptyMsg" class="empty" hidden>No apartments yet. Click <b>Read exposé (PDF)</b> to fill one in from a document, or <b>+ Add manually</b>.</div>
+        <div class="table-wrap"><table id="cmp"></table></div>
+      </div>
+    </section>
+
+    <!-- ============ ANALYSIS ============ -->
+    <section id="tab-analysis" class="tab">
+      <div class="card">
+        <div class="row between wrap-row">
+          <h2>Apartment</h2>
+          <select id="a_pick" aria-label="Choose apartment"></select>
+        </div>
+        <div class="grid" id="a_listing">
+          <label>Purchase price (€)<input id="a_price" type="number" min="0" step="any" inputmode="decimal"></label>
+          <label>Price (€/m²)<input id="a_pricem2" type="number" min="0" step="0.01" inputmode="decimal"></label>
+          <label>Size (m²)<input id="a_size" type="number" min="0" step="0.01" inputmode="decimal"></label>
+          <label>Federal state<select id="a_state"></select></label>
+          <label>Cold rent total (€/month)<input id="a_rent" type="number" min="0" step="0.01" inputmode="decimal"></label>
+          <label>Cold rent (€/m²/month)<input id="a_rentm2" type="number" min="0" step="0.01" inputmode="decimal"></label>
+          <label>Hausgeld total (€/month)<input id="a_hausgeld" type="number" min="0" step="0.01" inputmode="decimal"></label>
+          <label>Hausgeld (€/m²/month)<input id="a_hausm2" type="number" min="0" step="0.01" inputmode="decimal"></label>
+          <label>…of which passed on to tenant (€/month)<input id="a_umlage" type="number" min="0" step="0.01" inputmode="decimal"></label>
+        </div>
+        <p class="muted small" id="a_note"></p>
+      </div>
+
+      <div class="card" id="buildingCard">
+        <div class="row between wrap-row"><h2>Property details</h2><button id="editBuilding" class="link" hidden>Edit</button></div>
+        <p id="r_location" class="loc" hidden></p>
+        <h3 class="sect">Costs</h3>
+        <div id="r_costs"></div>
+        <h3 class="sect">Building details &amp; energy certificate</h3>
+        <div id="r_building"></div>
+      </div>
+
+      <div class="card" id="assumpCard">
+        <h2>Assumptions</h2>
+        <div class="grid">
+          <label>Equity
+            <span class="inline">
+              <input id="e_value" type="number" min="0" step="1" inputmode="decimal">
+              <select id="e_mode"><option value="percent">% of price</option><option value="euro">€</option></select>
+            </span>
+          </label>
+          <label>Interest rate (% p.a.)
+            <input id="e_rate" type="number" min="0" step="0.01" inputmode="decimal">
+            <span class="small muted" id="rateInfo">Loading Bundesbank rate…</span>
+          </label>
+          <label>Initial repayment (% p.a.)<input id="e_repay" type="number" min="0" step="0.1" inputmode="decimal"></label>
+          <label>Fixed-rate period (years)<input id="e_fix" type="number" min="1" max="40" step="1" inputmode="numeric"></label>
+          <label>Notary + land registry (% of price)<input id="e_notary" type="number" min="0" step="0.1" inputmode="decimal"></label>
+          <label>Buyer's agent commission (% of price)<input id="e_broker" type="number" min="0" step="0.01" inputmode="decimal"><span class="small muted" id="brokerInfo"></span></label>
+          <label>Vacancy allowance (% of rent)<input id="e_vac" type="number" min="0" step="0.5" inputmode="decimal"></label>
+          <label>Own-unit maintenance (€/m²/year)<input id="e_maint" type="number" min="0" step="1" inputmode="decimal"></label>
+          <label>Rental management (€/month)<input id="e_mgmt" type="number" min="0" step="1" inputmode="decimal"></label>
+        </div>
+        <div class="row gap"><button id="resetRate">Reset interest to Bundesbank</button><button id="resetAssump">Reset all assumptions</button></div>
+      </div>
+
+      <div id="results">
+        <div class="card"><h2>Purchase &amp; loan</h2><div id="r_loan"></div></div>
+        <div class="card"><h2>If you rent it out</h2><div id="r_rent"></div></div>
+        <div class="card"><h2>If you live in it</h2><div id="r_own"></div></div>
+        <div class="card"><h2>Loan balance over time</h2><div id="r_chart"></div><div class="table-wrap"><table id="r_sched"></table></div></div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="wrap foot">
+    <p>Informational calculator only. This is not financial, tax or legal advice, and not a loan or property offer. Interest rates shown are Bundesbank market averages (effective rate, new business, housing loans to households, initial fixation over 10 years). Your bank's actual offer will differ. Taxes (depreciation/AfA, income tax, 10-year speculation period) are not included. Not affiliated with ImmoScout24, Immowelt or Kleinanzeigen.</p>
+  </footer>
+
+  <!-- Add / edit dialog -->
+  <dialog id="dlg">
+    <form id="dlgForm" method="dialog">
+      <h2 id="dlgTitle">Add apartment</h2>
+      <div id="aiBanner" class="banner" hidden></div>
+      <div class="grid">
+        <label class="full">Title<input id="d_title" type="text" placeholder="e.g. 3-room flat, Schwabing" required></label>
+        <label class="full">Link to listing<input id="d_url" type="url" placeholder="https://www.immobilienscout24.de/expose/…"></label>
+        <h3 class="full">Location</h3>
+        <label>District (Stadtteil)<input id="d_district" type="text" maxlength="60" placeholder="e.g. Südstadt"></label>
+        <label>Postcode<input id="d_postal" type="text" inputmode="numeric" pattern="[0-9]{5}" maxlength="5" placeholder="e.g. 69126"></label>
+        <label>City<input id="d_city" type="text" maxlength="60" placeholder="e.g. Heidelberg"></label>
+        <h3 class="full">Price &amp; size</h3>
+        <label>Purchase price (€)<input id="d_price" type="number" min="0" step="any" required></label>
+        <label>Price (€/m²)<input id="d_pricem2" type="number" min="0" step="0.01"></label>
+        <label>Size (m²)<input id="d_size" type="number" min="0" step="0.01" required></label>
+        <label>Rooms<input id="d_rooms" type="number" min="0" step="0.5"></label>
+        <label>Federal state<select id="d_state"></select></label>
+        <span class="spacer"></span>
+        <label>Cold rent total (€/month)<input id="d_rent" type="number" min="0" step="0.01"></label>
+        <label>Cold rent (€/m²/month)<input id="d_rentm2" type="number" min="0" step="0.01"></label>
+        <span class="spacer"></span>
+        <label>Hausgeld total (€/month)<input id="d_hausgeld" type="number" min="0" step="0.01"></label>
+        <label>Hausgeld (€/m²/month)<input id="d_hausm2" type="number" min="0" step="0.01"></label>
+        <label>…passed on to tenant (€/month)<input id="d_umlage" type="number" min="0" step="0.01"></label>
+        <h3 class="full">Costs</h3>
+        <label>Garage/parking space price (€)<input id="d_garage" type="number" min="0" step="any"></label>
+        <label>Commission for buyer (% incl. VAT)<input id="d_commission" type="number" min="0" max="10" step="0.01" placeholder="blank = default"></label>
+        <span class="spacer"></span>
+        <h3 class="full">Building details &amp; energy certificate</h3>
+        <label>Year built<input id="d_b_year" type="number" min="1500" max="2100" step="1"></label>
+        <label>Condition<input id="d_b_condition" type="text" maxlength="60" placeholder="e.g. First-time occupancy"></label>
+        <label>Features<input id="d_b_features" type="text" maxlength="60" placeholder="e.g. Luxury"></label>
+        <label>Type of heating<input id="d_b_heating" type="text" maxlength="60" placeholder="e.g. Underfloor heating"></label>
+        <label>Energy certificate
+          <select id="d_b_certAvail"><option value="">–</option><option value="available">Available</option><option value="not available">Not available</option></select>
+        </label>
+        <label>Type of energy certificate
+          <select id="d_b_certType"><option value="">–</option><option value="demand">Demand certificate</option><option value="consumption">Consumption certificate</option></select>
+        </label>
+        <label>Final energy demand (kWh/(m²·a))<input id="d_b_demand" type="number" min="0" step="0.1"></label>
+        <label>Energy efficiency class
+          <select id="d_b_class"><option value="">–</option><option>A+</option><option>A</option><option>B</option><option>C</option><option>D</option><option>E</option><option>F</option><option>G</option><option>H</option></select>
+        </label>
+        <label>Year of construction per certificate<input id="d_b_certYear" type="number" min="1500" max="2100" step="1"></label>
+        <label class="full">Notes<textarea id="d_notes" rows="3" placeholder="Floor, energy class, WEG reserves, impressions…"></textarea></label>
+      </div>
+      <div class="row gap end">
+        <button type="button" id="dlgCancel">Cancel</button>
+        <button type="submit" id="dlgSave">Save</button>
+        <button type="submit" id="dlgAnalyze" class="primary">Save &amp; analyze</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Filter window -->
+  <dialog id="filterDlg">
+    <div class="row between"><h2>Filter</h2><button type="button" id="filterClose" class="link">✕ Close</button></div>
+    <div id="filterBody"></div>
+    <div class="row gap end">
+      <button type="button" id="filterReset">Reset filters</button>
+      <button type="button" id="filterDone" class="primary"></button>
+    </div>
+  </dialog>
+
+  <!-- AI settings -->
+  <dialog id="aiDlg">
+    <form method="dialog" id="aiForm">
+      <h2>AI settings · Gemini</h2>
+      <p class="muted small">Reading exposés uses Google's Gemini API with <b>your own free key</b>. The key is stored only in this browser. It is never uploaded to this site, and it is not part of Export.</p>
+      <ol class="steps small">
+        <li>Open <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">Google AI Studio → API keys</a> and sign in with a Google account.</li>
+        <li>Create an API key (the free tier is enough) and copy it.</li>
+        <li>Paste it below and click <b>Save &amp; test</b>.</li>
+      </ol>
+      <div class="grid one">
+        <label class="full">Gemini API key<input id="ai_key" type="password" autocomplete="off" spellcheck="false" placeholder="AIza…"></label>
+        <label class="full">Model<input id="ai_model" type="text" spellcheck="false"></label>
+      </div>
+      <p class="small muted">Free-tier note: Google may use content sent on the free tier to improve its products. Only upload public listing documents, never personal or financial papers. Free quotas are limited; if you hit the limit, wait and retry.</p>
+      <div id="ai_msg" class="small" role="status"></div>
+      <div class="row gap end">
+        <button type="button" id="aiClear" class="danger">Remove key</button>
+        <button type="button" id="aiClose">Close</button>
+        <button type="submit" class="primary" id="aiSave">Save &amp; test</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="js/calc.js"></script>
+  <script src="js/ai.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
