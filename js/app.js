@@ -36,10 +36,11 @@
   // ---------- state ----------
   const DEFAULT_ASSUMPTIONS = {
     equityMode: 'percent', equityValue: 20, ratePct: 4.0, followBundesbank: true,
-    repayPct: 2, fixYears: 10, notaryPct: 2, brokerPct: 3.57, vacancyPct: 3, maintPerSqm: 10, mgmtPerMonth: 0,
+    repayPct: 2, fixYears: 10, notaryPct: 2, brokerPct: 3.57, vacancyPct: 3, maintPerSqm: 10, maintPerSqmHouse: 15, mgmtPerMonth: 0,
   };
   let store = { listings: [], assumptions: { ...DEFAULT_ASSUMPTIONS }, search: { state: 'NW' }, draft: { state: 'NW' }, bb: null };
   try { const raw = localStorage.getItem(KEY); if (raw) { const p = JSON.parse(raw); store = { ...store, ...p, assumptions: { ...DEFAULT_ASSUMPTIONS, ...(p.assumptions || {}) } }; } } catch (e) { /* storage unavailable */ }
+  store.compare = { ids: [], sameEquity: true, diff: false, eq: {}, ...(store.compare || {}) };
   const save = () => { try { localStorage.setItem(KEY, JSON.stringify(store)); } catch (e) { /* ignore */ } };
   let sort = { key: 'netYield', dir: -1 };
   let editingId = null;
@@ -50,6 +51,7 @@
     document.querySelectorAll('#tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
     if (name === 'shortlist') renderShortlist();
     if (name === 'analysis') renderAnalysis();
+    if (name === 'compare') renderCompare();
     try { history.replaceState(null, '', '#' + name); } catch (e) { /* ignore */ }
   }
   $('tabs').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) showTab(b.dataset.tab); });
@@ -66,27 +68,28 @@
   const range = (a, b, fmt = (x) => x) => (a == null && b == null ? null : `${a == null ? '' : fmt(a)}-${b == null ? '' : fmt(b)}`);
 
   function readSearch() {
-    return { state: val('s_state'), city: val('s_city').trim(), pmin: numOrNull('s_pmin'), pmax: numOrNull('s_pmax'), smin: numOrNull('s_smin'), smax: numOrNull('s_smax'), rmin: numOrNull('s_rmin'), rmax: numOrNull('s_rmax') };
+    return { type: val('s_type') || 'apartment', state: val('s_state'), city: val('s_city').trim(), pmin: numOrNull('s_pmin'), pmax: numOrNull('s_pmax'), smin: numOrNull('s_smin'), smax: numOrNull('s_smax'), rmin: numOrNull('s_rmin'), rmax: numOrNull('s_rmax') };
   }
   function portals(s) {
     // ImmoScout24
     let path = '/Suche/de';
     if (s.state) { path += '/' + STATES[s.state].slug; if (s.city) path += '/' + slugCity(s.city); }
-    path += '/wohnung-kaufen';
+    path += s.type === 'house' ? '/haus-kaufen' : '/wohnung-kaufen';
     const q1 = new URLSearchParams();
     const pr = range(s.pmin, s.pmax), sz = range(s.smin, s.smax), rm = range(s.rmin, s.rmax, (x) => x.toFixed(1));
     if (pr) q1.set('price', pr); if (sz) q1.set('livingspace', sz); if (rm) q1.set('numberofrooms', rm);
     const is24 = 'https://www.immobilienscout24.de' + path + (q1.toString() ? '?' + q1 : '');
 
     // Immowelt
-    const q2 = new URLSearchParams({ distributionTypes: 'Buy', estateTypes: 'Apartment' });
+    const q2 = new URLSearchParams({ distributionTypes: 'Buy', estateTypes: s.type === 'house' ? 'House' : 'Apartment' });
     [['priceMin', s.pmin], ['priceMax', s.pmax], ['areaMin', s.smin], ['areaMax', s.smax], ['roomsMin', s.rmin], ['roomsMax', s.rmax]].forEach(([k, v]) => { if (v != null) q2.set(k, v); });
     const iw = 'https://www.immowelt.de/classified-search?' + q2;
 
     // Kleinanzeigen
-    let ka = 'https://www.kleinanzeigen.de/s-wohnung-kaufen/';
+    const cat = s.type === 'house' ? 208 : 196;
+    let ka = 'https://www.kleinanzeigen.de/' + (s.type === 'house' ? 's-haus-kaufen/' : 's-wohnung-kaufen/');
     if (s.pmin != null || s.pmax != null) ka += `preis:${s.pmin ?? ''}:${s.pmax ?? ''}/`;
-    ka += s.city ? `${encodeURIComponent(slugCity(s.city))}/k0c196` : 'c196';
+    ka += s.city ? `${encodeURIComponent(slugCity(s.city))}/k0c${cat}` : 'c' + cat;
 
     const loc = s.state ? (s.city ? 'state + city' : 'state') : '';
     return [
@@ -104,14 +107,14 @@
   $('searchForm').addEventListener('input', renderPortals);
   function loadSearch() {
     const s = store.search || {};
-    $('s_state').value = s.state ?? ''; $('s_city').value = s.city ?? '';
+    $('s_type').value = s.type || 'apartment'; $('s_state').value = s.state ?? ''; $('s_city').value = s.city ?? '';
     [['s_pmin', 'pmin'], ['s_pmax', 'pmax'], ['s_smin', 'smin'], ['s_smax', 'smax'], ['s_rmin', 'rmin'], ['s_rmax', 'rmax']].forEach(([id, k]) => { $(id).value = s[k] ?? ''; });
     renderPortals();
   }
 
   // ---------- SHORTLIST ----------
   const COLS = [
-    { key: 'title', label: 'Apartment', get: (l) => l.title.toLowerCase() },
+    { key: 'title', label: 'Property', get: (l) => l.title.toLowerCase() },
     { key: 'price', label: 'Purchase price', get: (l, a) => a.price, fmt: (a) => eur(a.price) },
     { key: 'size', label: 'Size (m²)', get: (l, a) => a.size, fmt: (a, l) => fmtSize(a.size) + (l.rooms ? ` · ${l.rooms} rm` : '') },
     { key: 'pricePerSqm', label: 'Price (€/m²)', get: (l, a) => a.pricePerSqm, fmt: (a) => eur(a.pricePerSqm), best: -1 },
@@ -140,8 +143,8 @@
   const fmtLocation = (l) => [l.district, [l.postalCode, l.city].filter(Boolean).join(' ')].filter(Boolean).join(', ');
   const sortValue = (key, l, a) => { if (key === 'yearBuilt') return l.building?.yearBuilt ?? null; const c = COLS.find((x) => x.key === key); return c ? c.get(l, a) : null; };
 
-  const view = { query: '', cities: new Set(), districts: new Set(), ranges: {} };
-  const activeFilters = () => view.cities.size + view.districts.size + Object.keys(view.ranges).length;
+  const view = { query: '', types: new Set(), cities: new Set(), districts: new Set(), ranges: {} };
+  const activeFilters = () => view.types.size + view.cities.size + view.districts.size + Object.keys(view.ranges).length;
 
   function matches(l) {
     const q = norm(view.query);
@@ -149,6 +152,7 @@
       const hay = norm([l.title, l.district, l.city, l.postalCode, STATES[l.state]?.name, l.notes].join(' '));
       if (!q.split(/\s+/).every((t) => hay.includes(t))) return false;
     }
+    if (view.types.size && !view.types.has(l.type || 'apartment')) return false;
     if (view.cities.size && !view.cities.has(norm(l.city))) return false;
     if (view.districts.size && !view.districts.has(norm(l.district))) return false;
     for (const r of RANGES) {
@@ -173,11 +177,11 @@
   $('sortSel').addEventListener('change', (e) => { const [k, d] = e.target.value.split(':'); sort = { key: k, dir: +d }; renderShortlist(); });
   $('q').addEventListener('input', (e) => { view.query = e.target.value; renderShortlist(); });
   $('clearAll').addEventListener('click', () => { view.query = ''; $('q').value = ''; resetFilters(); renderShortlist(); });
-  function resetFilters() { view.cities.clear(); view.districts.clear(); view.ranges = {}; }
+  function resetFilters() { view.types.clear(); view.cities.clear(); view.districts.clear(); view.ranges = {}; }
 
   function renderShortlist() {
     const total = store.listings.length;
-    $('count').textContent = total;
+    $('count').textContent = total; updateCmpCounts();
     $('emptyMsg').hidden = total > 0;
     $('listTools').hidden = total === 0;
     const t = $('cmp');
@@ -218,10 +222,11 @@
         }).join('');
         const title = url ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(l.title)} ↗</a>` : `<b>${esc(l.title)}</b>`;
         const loc = fmtLocation(l);
-        const place = loc ? `📍 ${esc(loc)}` : esc(STATES[l.state]?.name || '');
+        const tag = l.type === 'house' ? '<span class="tag">House</span> ' : '';
+        const place = tag + (loc ? `📍 ${esc(loc)}` : esc(STATES[l.state]?.name || ''));
         const missing = !l.rent ? '<div class="small muted">no rent entered</div>' : '';
         const notes = l.notes ? `<div class="small muted">${esc(l.notes)}</div>` : '';
-        return `<tr data-id="${l.id}"><td class="title">${title}<div class="loc-line">${place}</div>${missing}${notes}<div class="acts"><button class="link" data-act="analyze">Analyze</button><button class="link" data-act="edit">Edit</button><button class="link danger" data-act="del">Delete</button></div></td>${cells}</tr>`;
+        return `<tr data-id="${l.id}"><td class="title">${title}<div class="loc-line">${place}</div>${missing}${notes}<div class="acts"><label class="cmpchk"><input type="checkbox" data-cmp="${esc(l.id)}" ${store.compare.ids.includes(l.id) ? 'checked' : ''}> Compare</label><button class="link" data-act="analyze">Analyze</button><button class="link" data-act="edit">Edit</button><button class="link danger" data-act="del">Delete</button></div></td>${cells}</tr>`;
       }).join('') + '</tbody>';
   }
   $('cmp').addEventListener('click', (e) => {
@@ -236,6 +241,12 @@
     }
     if (btn.dataset.act === 'analyze') { store.pick = id; save(); showTab('analysis'); }
   });
+
+  $('cmp').addEventListener('change', (e) => {
+    const t = e.target; if (!t.matches || !t.matches('input[data-cmp]')) return;
+    if (!toggleCompare(t.dataset.cmp, t.checked)) t.checked = false;
+  });
+  $('cmpBtn').addEventListener('click', () => showTab('compare'));
 
   // ---------- filter window ----------
   const fdlg = $('filterDlg');
@@ -278,7 +289,9 @@
   function buildFilter() {
     const cities = uniqueValues('city');
     const dists = uniqueValues('district', (l) => !view.cities.size || view.cities.has(norm(l.city)));
-    $('filterBody').innerHTML = '<h3>City</h3>' + chipGroup('city', cities, view.cities, 'No city entered yet. Add it when you edit an apartment.') +
+    const present = new Set(store.listings.map((l) => l.type || 'apartment'));
+    const typeEntries = [['apartment', 'Apartment'], ['house', 'House']].filter(([k]) => present.has(k));
+    $('filterBody').innerHTML = (typeEntries.length > 1 ? '<h3>Property type</h3>' + chipGroup('type', typeEntries, view.types, '') : '') + '<h3>City</h3>' + chipGroup('city', cities, view.cities, 'No city entered yet. Add it when you edit an apartment.') +
       '<h3>District (Stadtteil)</h3>' + chipGroup('district', dists, view.districts, 'No district entered yet.') +
       '<div style="margin-top:14px">' + RANGES.map(buildRange).join('') + '</div>' +
       '<p class="small muted">Apartments without a value for a narrowed range (for example no rent entered) are hidden.</p>';
@@ -296,7 +309,7 @@
   });
   $('filterBody').addEventListener('change', (e) => {
     const t = e.target; if (t.type !== 'checkbox') return;
-    const set = t.dataset.grp === 'city' ? view.cities : view.districts;
+    const set = t.dataset.grp === 'type' ? view.types : t.dataset.grp === 'city' ? view.cities : view.districts;
     if (t.checked) set.add(t.value); else set.delete(t.value);
     if (t.dataset.grp === 'city') { // keep only districts that belong to the chosen cities
       const ok = new Set(store.listings.filter((l) => !view.cities.size || view.cities.has(norm(l.city))).map((l) => norm(l.district)));
@@ -311,11 +324,12 @@
   function openDialog(id, prefill) {
     editingId = id || null;
     const l = id ? store.listings.find((x) => x.id === id) : (prefill || { state: store.search?.state || store.draft.state || 'NW' });
-    $('dlgTitle').textContent = id ? 'Edit apartment' : 'Add apartment';
+    $('dlgTitle').textContent = id ? 'Edit property' : 'Add property';
     $('d_title').value = l.title ?? ''; $('d_url').value = l.url ?? ''; $('d_price').value = l.price ?? ''; $('d_size').value = l.size ?? '';
     $('d_rooms').value = l.rooms ?? ''; $('d_state').value = l.state || 'NW'; $('d_rent').value = l.rent ?? '';
     $('d_hausgeld').value = l.hausgeld ?? ''; $('d_umlage').value = l.umlagefaehig ?? ''; $('d_notes').value = l.notes ?? '';
     $('d_district').value = l.district ?? ''; $('d_postal').value = l.postalCode ?? ''; $('d_city').value = l.city ?? '';
+    $('d_type').value = l.type || 'apartment'; $('d_plot').value = l.plotSize ?? ''; applyTypeUI('d_');
     $('d_garage').value = l.garagePrice ?? ''; $('d_commission').value = l.commissionPct ?? '';
     const b = l.building || {};
     $('d_b_year').value = b.yearBuilt ?? ''; $('d_b_condition').value = b.condition ?? ''; $('d_b_features').value = b.features ?? '';
@@ -329,6 +343,13 @@
     if (prefill && prefill.missing) prefill.missing.forEach((fid) => $(fid).classList.add('missing'));
     dlg.showModal();
   }
+  function applyTypeUI(p) { // houses: plot size field and "ancillary costs" wording instead of Hausgeld
+    const house = val(p + 'type') === 'house';
+    $(p + 'plotLbl').hidden = !house;
+    $(p + 'hgLbl').textContent = house ? 'Ancillary & upkeep costs (€/month)' : 'Hausgeld total (€/month)';
+    $(p + 'hgm2Lbl').textContent = house ? 'Ancillary costs (€/m²/month)' : 'Hausgeld (€/m²/month)';
+  }
+  $('d_type').addEventListener('change', () => applyTypeUI('d_'));
   $('addBtn').addEventListener('click', () => openDialog());
   $('dlgCancel').addEventListener('click', () => dlg.close());
   $('d_url').addEventListener('change', () => { // suggest a title from the portal name
@@ -345,6 +366,7 @@
       title: val('d_title').trim(), url, price: +val('d_price') || 0, size: r2(+val('d_size') || 0), rooms: numOrNull('d_rooms'),
       state: val('d_state'), rent: r2(+val('d_rent') || 0), hausgeld: r2(+val('d_hausgeld') || 0), umlagefaehig: r2(+val('d_umlage') || 0), notes: val('d_notes').trim(),
       district: val('d_district').trim(), postalCode: val('d_postal').trim(), city: val('d_city').trim(),
+      type: val('d_type'), plotSize: numOrNull('d_plot'),
       garagePrice: numOrNull('d_garage'), commissionPct: numOrNull('d_commission'),
       building: {
         yearBuilt: numOrNull('d_b_year'), condition: val('d_b_condition').trim(), features: val('d_b_features').trim(), heating: val('d_b_heating').trim(),
@@ -398,7 +420,7 @@
       const unfilled = need.filter(([, v]) => v == null).map(([fid]) => ({ d_price: 'price', d_size: 'size', d_rent: 'rent', d_hausgeld: 'Hausgeld' }[fid]));
       aiStatus('✓ Document read. Please check every value in the form.', 'ok');
       openDialog(null, {
-        title: d.title || file.name.replace(/\.pdf$/i, ''), url: '', price: d.price ?? '', size: d.size ?? '', rooms: d.rooms, state: d.state || store.search?.state || 'NW',
+        title: d.title || file.name.replace(/\.pdf$/i, ''), url: '', price: d.price ?? '', size: d.size ?? '', rooms: d.rooms, type: d.propertyType, plotSize: d.plot, state: d.state || store.search?.state || 'NW',
         rent: d.rent ?? '', hausgeld: d.hausgeld ?? '', umlagefaehig: d.umlage ?? '', notes, district: d.district, postalCode: d.postalCode, city: d.city, building: d.building, garagePrice: d.garage, commissionPct: d.commission, missing,
         aiNote: 'Filled in by AI from "' + file.name + '". AI can misread numbers, so check every value against the document.' +
           (unfilled.length ? ' Not found in the document (highlighted): ' + unfilled.join(', ') + '.' : '') + (warnings.length ? ' ' + warnings.join(' ') : '') +
@@ -424,8 +446,8 @@
       if (d.app !== 'apartment-compass' || !Array.isArray(d.listings)) throw new Error('bad file');
       const ids = new Set(store.listings.map((l) => l.id));
       let added = 0;
-      d.listings.forEach((l) => { if (l && l.title && !ids.has(l.id) && (!l.url || safeUrl(l.url))) { store.listings.push({ ...l, title: String(l.title), url: l.url || '', id: String(l.id || 'i' + Date.now() + added), price: +l.price || 0, size: +l.size || 0, rent: +l.rent || 0, hausgeld: +l.hausgeld || 0, umlagefaehig: +l.umlagefaehig || 0, state: STATES[l.state] ? l.state : 'NW' }); added++; } });
-      save(); renderShortlist(); alert(`Imported ${added} new apartment(s).`);
+      d.listings.forEach((l) => { if (l && l.title && !ids.has(l.id) && (!l.url || safeUrl(l.url))) { store.listings.push({ ...l, title: String(l.title), url: l.url || '', id: String(l.id || 'i' + Date.now() + added), price: +l.price || 0, size: +l.size || 0, rent: +l.rent || 0, hausgeld: +l.hausgeld || 0, umlagefaehig: +l.umlagefaehig || 0, state: STATES[l.state] ? l.state : 'NW', type: l.type === 'house' ? 'house' : 'apartment' }); added++; } });
+      save(); renderShortlist(); alert(`Imported ${added} new propert${added === 1 ? 'y' : 'ies'}.`);
     } catch (err) { alert('This file could not be imported. Use a file exported from this app.'); }
     e.target.value = '';
   });
@@ -440,6 +462,14 @@
     sel.innerHTML = '<option value="">Quick scenario (not saved to shortlist)</option>' + store.listings.map((l) => `<option value="${esc(l.id)}">${esc(l.title)}</option>`).join('');
     sel.value = store.listings.some((l) => l.id === store.pick) ? store.pick : '';
   }
+  // Equity: the amount (€) and the percentage of this property's price are linked. Whichever was edited last is stored.
+  function setEquityFields(skip) {
+    const a = store.assumptions, price = +currentListing().obj.price || 0;
+    const amount = a.equityMode === 'euro' ? a.equityValue : price * a.equityValue / 100;
+    const pc = a.equityMode === 'percent' ? a.equityValue : (price > 0 ? a.equityValue / price * 100 : null);
+    if (skip !== 'e_amount') $('e_amount').value = price > 0 || a.equityMode === 'euro' ? r2(amount) : '';
+    if (skip !== 'e_pct') $('e_pct').value = pc == null ? '' : r2(pc);
+  }
   function renderBrokerInfo() {
     const { obj } = currentListing();
     const own = obj.commissionPct != null && obj.commissionPct !== '';
@@ -448,13 +478,14 @@
   function loadAnalysisFields() {
     const { obj, saved } = currentListing();
     $('a_price').value = obj.price ?? ''; $('a_size').value = obj.size ?? ''; $('a_state').value = obj.state || 'NW';
+    $('a_type').value = obj.type || 'apartment'; $('a_plot').value = obj.plotSize ?? ''; applyTypeUI('a_');
     $('a_rent').value = obj.rent ?? ''; $('a_hausgeld').value = obj.hausgeld ?? ''; $('a_umlage').value = obj.umlagefaehig ?? '';
     resetPairs('a_');
     $('a_note').textContent = saved ? 'Changes here are saved to this apartment in your shortlist.' : 'Type any numbers to try a scenario. To keep it, add the apartment on the Shortlist tab.';
     const a = store.assumptions;
-    $('e_mode').value = a.equityMode; $('e_value').value = a.equityValue; $('e_rate').value = a.ratePct; $('e_repay').value = a.repayPct;
+    setEquityFields(); $('e_rate').value = a.ratePct; $('e_repay').value = a.repayPct;
     $('e_fix').value = a.fixYears; $('e_notary').value = a.notaryPct; $('e_broker').value = obj.commissionPct ?? a.brokerPct; renderBrokerInfo(); $('e_vac').value = a.vacancyPct;
-    $('e_maint').value = a.maintPerSqm; $('e_mgmt').value = a.mgmtPerMonth;
+    $('e_maint').value = a.maintPerSqm; $('e_maintH').value = a.maintPerSqmHouse; $('e_mgmt').value = a.mgmtPerMonth;
   }
   const CERT = { available: 'Available', 'not available': 'Not available' };
   const CERT_TYPE = { demand: 'Demand certificate', consumption: 'Consumption certificate' };
@@ -476,6 +507,7 @@
     ].filter((r) => r[1] != null);
     $('r_costs').innerHTML = crow.length ? '<dl class="bgrid">' + crow.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('') + '</dl>' : '<p class="muted">No cost details yet.</p>';
     const rows = [
+      ['Property type', l.type === 'house' ? 'House' : null], ['Plot size', l.type === 'house' && l.plotSize > 0 ? fmtSize(l.plotSize) + ' m²' : null],
       ['Year built', b.yearBuilt], ['Condition', b.condition], ['Features', b.features], ['Type of heating', b.heating],
       ['Energy certificate', CERT[b.certAvailable]], ['Type of energy certificate', CERT_TYPE[b.certType]],
       ['Final energy demand', b.energyDemand != null ? `${b.energyDemand} kWh/(m²·a)` : null],
@@ -487,19 +519,35 @@
       : '<p class="muted">No building details yet. Click Edit to add them.</p>';
   }
   $('editBuilding').addEventListener('click', () => { if ($('editBuilding').dataset.id) openDialog($('editBuilding').dataset.id); });
-  function renderAnalysis() { fillPicker(); loadAnalysisFields(); renderBuilding(); renderRateInfo(); renderResults(); }
+  function renderCmpButton() {
+    const btn = $('addCmp'), l = store.listings.find((x) => x.id === store.pick);
+    btn.hidden = !l; if (!l) return;
+    const inC = store.compare.ids.includes(l.id);
+    btn.textContent = inC ? `✓ In comparison (${store.compare.ids.length}/3) · remove` : `+ Add to comparison (${store.compare.ids.length}/3)`;
+    btn.className = inC ? '' : 'primary';
+  }
+  $('addCmp').addEventListener('click', () => {
+    const l = store.listings.find((x) => x.id === store.pick); if (!l) return;
+    toggleCompare(l.id, !store.compare.ids.includes(l.id));
+    renderCmpButton();
+  });
+  function renderAnalysis() { fillPicker(); loadAnalysisFields(); renderBuilding(); renderCmpButton(); renderRateInfo(); renderResults(); }
 
-  $('a_pick').addEventListener('change', () => { store.pick = val('a_pick') || null; save(); loadAnalysisFields(); renderBuilding(); renderResults(); });
+  $('a_pick').addEventListener('change', () => { store.pick = val('a_pick') || null; save(); loadAnalysisFields(); renderBuilding(); renderCmpButton(); renderResults(); });
   $('a_listing').addEventListener('input', () => {
     const { obj } = currentListing();
     obj.price = +val('a_price') || 0; obj.size = r2(+val('a_size') || 0); obj.state = val('a_state');
+    obj.type = val('a_type'); obj.plotSize = numOrNull('a_plot'); applyTypeUI('a_'); setEquityFields();
     obj.rent = r2(+val('a_rent') || 0); obj.hausgeld = r2(+val('a_hausgeld') || 0); obj.umlagefaehig = r2(+val('a_umlage') || 0);
     save(); renderResults();
   });
-  const A_MAP = { e_value: 'equityValue', e_rate: 'ratePct', e_repay: 'repayPct', e_fix: 'fixYears', e_notary: 'notaryPct', e_broker: 'brokerPct', e_vac: 'vacancyPct', e_maint: 'maintPerSqm', e_mgmt: 'mgmtPerMonth' };
-  document.querySelectorAll('#assumpCard input, #e_mode').forEach((el) => el.addEventListener('input', () => {
+  const A_MAP = { e_maintH: 'maintPerSqmHouse', e_rate: 'ratePct', e_repay: 'repayPct', e_fix: 'fixYears', e_notary: 'notaryPct', e_broker: 'brokerPct', e_vac: 'vacancyPct', e_maint: 'maintPerSqm', e_mgmt: 'mgmtPerMonth' };
+  document.querySelectorAll('#assumpCard input').forEach((el) => el.addEventListener('input', () => {
     const a = store.assumptions;
-    if (el.id === 'e_mode') a.equityMode = el.value;
+    if (el.id === 'e_amount' || el.id === 'e_pct') {
+      a.equityMode = el.id === 'e_amount' ? 'euro' : 'percent'; a.equityValue = el.value === '' ? 0 : +el.value;
+      setEquityFields(el.id);
+    }
     else if (el.id === 'e_broker') { // the commission belongs to the apartment; blank falls back to the default
       currentListing().obj.commissionPct = el.value === '' ? null : +el.value;
       renderBrokerInfo(); renderBuilding();
@@ -509,6 +557,7 @@
   $('resetRate').addEventListener('click', () => { store.assumptions.followBundesbank = true; applyBundesbank(); save(); loadAnalysisFields(); renderRateInfo(); renderResults(); });
   $('resetAssump').addEventListener('click', () => { store.assumptions = { ...DEFAULT_ASSUMPTIONS }; applyBundesbank(); save(); loadAnalysisFields(); renderRateInfo(); renderResults(); });
 
+  const hgName = (l) => (l.type === 'house' ? 'ancillary & upkeep costs' : 'Hausgeld');
   function kpi(k, v, h, cls = '') { return `<div class="kpi"><div class="k">${k}</div><div class="v ${cls}">${v}</div>${h ? `<div class="h">${h}</div>` : ''}</div>`; }
   function lines(rows) { return '<table class="lines">' + rows.map(([a, b, cls]) => `<tr class="${cls || ''}"><td>${a}</td><td>${b}</td></tr>`).join('') + '</table>'; }
 
@@ -546,8 +595,8 @@
       lines([
         ['Annual cold rent', eur(a.annualRent)],
         [`− Vacancy allowance (${as.vacancyPct}%)`, eur(a.annualRent - a.effectiveRent)],
-        ['− Non-recoverable Hausgeld', eur(a.nonRecoverable)],
-        ['− Own-unit maintenance', eur(a.maintenance)],
+        [`− Non-recoverable ${hgName(obj)}`, eur(a.nonRecoverable)],
+        ['− Maintenance', eur(a.maintenance)],
         ['− Rental management', eur(a.mgmt)],
         ['Net operating income', eur(a.noi), 'total'],
         ['− Loan payments (interest + repayment)', eur(a.annualDebt)],
@@ -556,9 +605,9 @@
         ['Break-even rent (cash flow = 0)', eur(a.breakEvenRent) + ' / month'],
       ]) + '<p class="small muted">Tax is not included (income tax on rent, depreciation/AfA, speculation period). Ask a tax advisor. Property tax (Grundsteuer) is normally part of the Hausgeld/ancillary costs.</p>';
 
-    $('r_own').innerHTML = '<div class="kv">' + kpi('Monthly cost of owning', eur(a.ownerMonthly), 'loan + total Hausgeld + maintenance reserve') +
+    $('r_own').innerHTML = '<div class="kv">' + kpi('Monthly cost of owning', eur(a.ownerMonthly), `loan + total ${hgName(obj)} + maintenance`) +
       kpi('Compare with renting', a.annualRent > 0 ? eur(obj.rent) + ' / month' : '–', 'cold rent entered above, plus utilities') + '</div>' +
-      lines([['Loan payment', eur(a.loan.payment)], ['Hausgeld (incl. heating, water etc.)', eur(obj.hausgeld)], ['Maintenance (own unit)', eur(a.maintenance / 12)], ['Total per month', eur(a.ownerMonthly), 'total']]) +
+      lines([['Loan payment', eur(a.loan.payment)], [`${hgName(obj)} (incl. heating, water etc.)`, eur(obj.hausgeld)], ['Maintenance', eur(a.maintenance / 12)], ['Total per month', eur(a.ownerMonthly), 'total']]) +
       `<p class="small muted">Of the loan payment about ${eur(a.loan.year1Principal / 12)} per month in year 1 builds your equity. The rest is interest.</p>`;
 
     renderChart(a, as);
@@ -584,6 +633,251 @@
       show.map((r) => `<tr><td>${r.year}</td><td>${eur(r.interest)}</td><td>${eur(r.principal)}</td><td>${eur(r.balance)}</td></tr>`).join('') +
       `</tbody><tfoot><tr><td>Total</td><td>${eur(sumI)}</td><td>${eur(sumP)}</td><td></td></tr></tfoot>`;
   }
+
+
+  // ---------- COMPARE ----------
+  const MAXCMP = 3, LETTERS = ['A', 'B', 'C'], DASH = ['', '7 4', '2 4'];
+  const ENERGY = ['A+', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+  let toastTimer = null;
+  function toast(msg, action) {
+    const t = $('toast'); t.textContent = '';
+    const span = document.createElement('span'); span.textContent = msg; t.appendChild(span);
+    if (action) { const b = document.createElement('button'); b.type = 'button'; b.textContent = action.label; b.addEventListener('click', () => { t.hidden = true; action.run(); }); t.appendChild(b); }
+    t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 6000);
+  }
+  function cmpState() {
+    const c = store.compare;
+    c.ids = c.ids.filter((id) => store.listings.some((l) => l.id === id)).slice(0, MAXCMP);
+    Object.keys(c.eq).forEach((id) => { if (!c.ids.includes(id)) delete c.eq[id]; });
+    return c;
+  }
+  function updateCmpCounts() {
+    const n = cmpState().ids.length;
+    $('cmpCount').textContent = n; $('cmpBtnCount').textContent = n;
+  }
+  /** Adds/removes a property. Returns false (and warns) if the comparison is already full. */
+  function toggleCompare(id, on) {
+    const c = cmpState();
+    if (on) {
+      if (c.ids.includes(id)) return true;
+      if (c.ids.length >= MAXCMP) {
+        toast('Your comparison already has 3 properties (A, B, C). Remove one in the Compare tab before adding another.', { label: 'Open Compare', run: () => showTab('compare') });
+        return false;
+      }
+      c.ids.push(id);
+    } else { c.ids = c.ids.filter((x) => x !== id); delete c.eq[id]; }
+    save(); updateCmpCounts();
+    if ($('tab-compare').classList.contains('active')) renderCompare();
+    return true;
+  }
+
+  function cmpColumns() {
+    const c = cmpState(), cols = [];
+    c.ids.forEach((id, i) => {
+      const l = store.listings.find((x) => x.id === id); let mode, value;
+      if (c.eq[id]) { mode = c.eq[id].mode; value = c.eq[id].value; }
+      else if (c.sameEquity && i > 0) { mode = 'euro'; value = cols[0].a.equity; } // same amount as A
+      else { mode = store.assumptions.equityMode; value = store.assumptions.equityValue; }
+      const asm = { ...store.assumptions, equityMode: mode, equityValue: value };
+      cols.push({ id, l, asm, a: analyze(l, asm), own: !!c.eq[id] });
+    });
+    return cols;
+  }
+
+  // One row = label + value per column. best: 'low' | 'high' marks the best value; delta: how to show the gap to A.
+  const rent = (l) => (l.rent > 0 ? l.rent : null);
+  const hasRent = (a) => a.annualRent > 0;
+  const SECTIONS = [
+    ['Basics', [
+      { label: 'Property type', text: (l) => (l.type === 'house' ? 'House' : 'Apartment') },
+      { label: 'Location', text: (l) => fmtLocation(l) || STATES[l.state]?.name || null },
+      { label: 'Size (m²)', val: (l, a) => a.size || null, fmt: (v) => fmtSize(v) + ' m²' },
+      { label: 'Plot size (m²)', val: (l) => (l.type === 'house' && l.plotSize > 0 ? l.plotSize : null), fmt: (v) => fmtSize(v) + ' m²' },
+      { label: 'Rooms', val: (l) => l.rooms ?? null, fmt: String },
+      { label: 'Year built', val: (l) => l.building?.yearBuilt ?? null, fmt: String },
+    ]],
+    ['Costs', [
+      { label: 'Purchase price', val: (l, a) => a.price || null, fmt: eur, best: 'low', delta: 'eur' },
+      { label: 'Price (€/m²)', val: (l, a) => a.pricePerSqm, fmt: (v) => eur(v) + ' /m²', best: 'low', delta: 'eur' },
+      { label: 'Garage/parking price', val: (l) => (l.garagePrice != null && l.garagePrice !== '' ? +l.garagePrice : null), fmt: eur },
+      { label: 'Property transfer tax', val: (l, a) => a.costs.transferTax, fmt: eur, best: 'low', delta: 'eur', sub: (l, a) => a.costs.taxPct + '%' },
+      { label: 'Notary + land registry', val: (l, a) => a.costs.notary, fmt: eur, best: 'low', delta: 'eur' },
+      { label: 'Agent commission', val: (l, a) => a.costs.broker, fmt: eur, best: 'low', delta: 'eur', sub: (l, a) => a.costs.brokerPct + '%' + (l.commissionPct != null && l.commissionPct !== '' ? ' (exposé)' : ' (default)') },
+      { label: 'Total purchase cost', val: (l, a) => a.totalCost || null, fmt: eur, best: 'low', delta: 'eur' },
+    ]],
+    ['Financing', [
+      { equity: true },
+      { label: 'Loan amount', val: (l, a) => a.principal, fmt: eur, best: 'low', delta: 'eur' },
+      { label: 'Monthly loan payment', val: (l, a) => a.loan.payment, fmt: eur, best: 'low', delta: 'eur' },
+      { label: 'Debt left after fixed period', val: (l, a) => a.loan.balanceAtFix, fmt: eur, best: 'low', delta: 'eur' },
+      { label: 'Interest paid in fixed period', val: (l, a) => a.loan.interestFix, fmt: eur, best: 'low', delta: 'eur' },
+      { label: 'Time to full repayment', val: (l, a) => (isFinite(a.loan.yearsToPayoff) ? a.loan.yearsToPayoff : null), fmt: (v) => n1(v) + ' yrs', best: 'low', delta: 'num' },
+    ]],
+    ['If rented out', [
+      { label: 'Cold rent (€/month)', val: (l) => rent(l), fmt: eur, delta: 'eur' },
+      { label: 'Gross yield', val: (l, a) => a.grossYield, fmt: (v) => pct(v), best: 'high', delta: 'pts' },
+      { label: 'Net yield', val: (l, a) => a.netYield, fmt: (v) => pct(v), best: 'high', delta: 'pts' },
+      { label: 'Cash flow (€/month, before tax)', val: (l, a) => (hasRent(a) ? a.cashflow / 12 : null), fmt: eur, best: 'high', delta: 'eur' },
+      { label: 'Return on equity', val: (l, a) => a.cashOnCash, fmt: (v) => pct(v), best: 'high', delta: 'pts' },
+      { label: 'Break-even rent (€/month)', val: (l, a) => (a.price > 0 ? a.breakEvenRent : null), fmt: eur, best: 'low', delta: 'eur' },
+      { label: 'Price-to-rent factor', val: (l, a) => a.priceToRent, fmt: (v) => n1(v) + '×', best: 'low', delta: 'num' },
+    ]],
+    ['If you live in it', [
+      { label: 'Monthly cost of owning', val: (l, a) => (a.price > 0 ? a.ownerMonthly : null), fmt: eur, best: 'low', delta: 'eur' },
+    ]],
+    ['Building & energy', [
+      { label: 'Condition', text: (l) => l.building?.condition || null },
+      { label: 'Features', text: (l) => l.building?.features || null },
+      { label: 'Type of heating', text: (l) => l.building?.heating || null },
+      { label: 'Energy efficiency class', val: (l) => { const i = ENERGY.indexOf(l.building?.energyClass); return i >= 0 ? i : null; }, fmt: (v) => ENERGY[v], best: 'low' },
+      { label: 'Final energy demand', val: (l) => l.building?.energyDemand ?? null, fmt: (v) => v + ' kWh/(m²·a)', best: 'low', delta: 'num' },
+    ]],
+  ];
+  const signed = (d, f) => (d > 0 ? '+' : d < 0 ? '−' : '±') + f(Math.abs(d));
+  const deltaText = (kind, d) => (kind === 'eur' ? signed(d, (x) => eur(x)) : kind === 'pts' ? signed(d, (x) => (x * 100).toFixed(2) + ' pts') : signed(d, (x) => n1(x)));
+
+  /** Builds the comparison as data (used for both the HTML table and "Copy as table"). */
+  function cmpModel(cols) {
+    const wins = cols.map(() => 0); let measures = 0;
+    const sections = SECTIONS.map(([title, rows]) => ({
+      title,
+      rows: rows.map((r) => {
+        if (r.equity) return { equity: true };
+        const cells = cols.map((c) => {
+          if (r.text) return { text: r.text(c.l) || '–', v: null };
+          const v = r.val(c.l, c.a); return { v, text: v == null || !isFinite(v) ? '–' : r.fmt(v), sub: v != null && r.sub ? r.sub(c.l, c.a) : '' };
+        });
+        const vs = cells.map((x) => x.v).filter((v) => v != null && isFinite(v));
+        if (r.best && vs.length >= 2) {
+          const target = r.best === 'low' ? Math.min(...vs) : Math.max(...vs);
+          if (vs.some((v) => Math.abs(v - target) > 1e-9)) { // not all equal
+            measures++;
+            cells.forEach((x, i) => { if (x.v != null && Math.abs(x.v - target) < 1e-9) { x.best = true; wins[i]++; } });
+          }
+        }
+        if (r.delta && cells[0].v != null) cells.forEach((x, i) => { if (i > 0 && x.v != null && isFinite(x.v)) x.delta = deltaText(r.delta, x.v - cells[0].v); });
+        return { label: r.label, cells };
+      }),
+    }));
+    return { sections, wins, measures };
+  }
+
+  const colorOf = (i) => `var(--c${i + 1})`;
+  const shortTitle = (l) => (l.title.length > 26 ? l.title.slice(0, 25) + '…' : l.title);
+
+  function renderCompare() {
+    const c = cmpState(); updateCmpCounts(); save();
+    const cols = cmpColumns();
+    $('cmpSame').checked = c.sameEquity; $('cmpDiff').checked = c.diff;
+    $('printHead').textContent = `Apartment Compass · comparison · ${new Date().toLocaleDateString('en-GB')} · interest ${store.assumptions.ratePct}% · repayment ${store.assumptions.repayPct}% · fixed ${store.assumptions.fixYears} yrs`;
+    // slots
+    const opts = (sel) => '<option value="">– empty –</option>' + store.listings.map((l) => `<option value="${esc(l.id)}" ${l.id === sel ? 'selected' : ''}>${esc(l.title)}</option>`).join('');
+    $('cmpSlots').innerHTML = LETTERS.map((L, i) => `<label>${L}<select data-slot="${i}">${opts(c.ids[i])}</select></label>`).join('');
+    $('cmpEmpty').hidden = cols.length >= 2; $('cmpBody').hidden = cols.length < 1;
+    $('cmpSummary').textContent = '';
+    if (cols.length < 1) return;
+    const m = cmpModel(cols);
+    $('cmpSummary').textContent = cols.length >= 2 && m.measures
+      ? 'Best value in: ' + cols.map((x, i) => `${LETTERS[i]} ${m.wins[i]}`).join(' · ') + ` (of ${m.measures} measures with data). A count of measures, not a recommendation.`
+      : '';
+    const head = '<thead><tr><th></th>' + cols.map((x, i) => `<th class="colhead"><span class="letter" style="background:${colorOf(i)}">${LETTERS[i]}</span>${safeUrl(x.l.url) ? `<a href="${esc(safeUrl(x.l.url))}" target="_blank" rel="noopener noreferrer">${esc(x.l.title)} ↗</a>` : esc(x.l.title)}
+      <div class="acts noprint"><button class="link" data-act="analyze" data-i="${i}">Analyze</button><button class="link" data-act="edit" data-i="${i}">Edit</button><button class="link danger" data-act="remove" data-i="${i}">Remove</button></div></th>`).join('') + '</tr></thead>';
+    const body = '<tbody>' + m.sections.map((s) => `<tr class="sec"><th colspan="${cols.length + 1}">${esc(s.title)}</th></tr>` + s.rows.map((r) => {
+      if (r.equity) {
+        return '<tr><th scope="row">Equity</th>' + cols.map((x, i) => {
+          const price = x.a.price, pc = price > 0 ? r2(x.a.equity / price * 100) : '';
+          const note = x.own ? `adjusted for this one · <button class="link" data-act="eqreset" data-i="${i}">reset</button>` : (c.sameEquity && i > 0 ? 'same amount as A' : 'from Assumptions');
+          return `<td><div class="eqin"><input type="text" inputmode="decimal" data-eq="amount" data-i="${i}" value="${r2(x.a.equity)}" aria-label="Equity amount ${LETTERS[i]}"><span>€</span></div>
+            <div class="eqin"><input type="text" inputmode="decimal" data-eq="pct" data-i="${i}" value="${pc}" aria-label="Equity percent ${LETTERS[i]}"><span>%</span></div><span class="sub">${note}</span></td>`;
+        }).join('') + '</tr>';
+      }
+      return `<tr><th scope="row">${esc(r.label)}</th>` + r.cells.map((x) => `<td class="${x.best ? 'best' : ''}">${esc(x.text)}${x.sub ? `<span class="sub">${esc(x.sub)}</span>` : ''}${c.diff && x.delta ? `<span class="delta">${esc(x.delta)} vs. A</span>` : ''}</td>`).join('') + '</tr>';
+    }).join('')).join('') + '</tbody>';
+    $('cmpTable').innerHTML = head + body;
+    $('cmpLoanChart').innerHTML = cmpLoanChart(cols);
+    $('cmpBar').innerHTML = cmpBarChart(cols);
+  }
+
+  function legend(cols) {
+    return '<div class="legend">' + cols.map((x, i) => `<span><svg width="28" height="10" aria-hidden="true"><line x1="0" y1="5" x2="28" y2="5" stroke="${colorOf(i)}" stroke-width="3" ${DASH[i] ? `stroke-dasharray="${DASH[i]}"` : ''}/></svg>${LETTERS[i]} · ${esc(shortTitle(x.l))}</span>`).join('') + '</div>';
+  }
+  function cmpLoanChart(cols) {
+    const withLoan = cols.map((x, i) => ({ x, i })).filter((o) => o.x.a.loan.rows.length);
+    if (!withLoan.length) return '<p class="muted">No loan needed with these equity amounts.</p>';
+    const W = 640, H = 240, pl = 56, pb = 24, pt = 12, pr = 12, fix = store.assumptions.fixYears;
+    const yrs = Math.min(40, Math.max(...withLoan.map((o) => o.x.a.loan.rows.length)));
+    const max = Math.max(...withLoan.map((o) => o.x.a.principal));
+    const X = (v) => pl + ((W - pl - pr) * v) / yrs, Y = (v) => pt + (H - pt - pb) * (1 - v / max);
+    let g = ''; for (let k = 0; k <= 4; k++) { const v = (max * k) / 4; g += `<line x1="${pl}" x2="${W - pr}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--line)"/><text x="${pl - 6}" y="${Y(v) + 4}" text-anchor="end">${Math.round(v / 1000)}k</text>`; }
+    for (let t = 0; t <= yrs; t += yrs > 25 ? 10 : 5) g += `<text x="${X(t)}" y="${H - 6}" text-anchor="middle">${t}y</text>`;
+    const fx = Math.min(fix, yrs);
+    const lines = withLoan.map(({ x, i }) => {
+      const pts = [[0, x.a.principal]].concat(x.a.loan.rows.slice(0, yrs).map((r) => [r.year, r.balance]));
+      return `<path d="${pts.map((p, k) => (k ? 'L' : 'M') + X(p[0]).toFixed(1) + ' ' + Y(p[1]).toFixed(1)).join(' ')}" fill="none" stroke="${colorOf(i)}" stroke-width="2.5" ${DASH[i] ? `stroke-dasharray="${DASH[i]}"` : ''}/>`;
+    }).join('');
+    return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Remaining loan balance by year for each compared property">${g}<line x1="${X(fx)}" x2="${X(fx)}" y1="${pt}" y2="${H - pb}" stroke="var(--muted)" stroke-dasharray="2 3"/><text x="${X(fx) + 4}" y="${pt + 10}">fixed rate ends</text>${lines}</svg>` + legend(cols);
+  }
+  function cmpBarChart(cols) {
+    const W = 640, H = 240, pl = 12, pr = 12, pt = 22, pb = 34, n = cols.length;
+    const data = cols.map((x) => ({ own: x.a.price > 0 ? x.a.ownerMonthly : 0, rent: rent(x.l) || 0 }));
+    const max = Math.max(1, ...data.flatMap((d) => [d.own, d.rent]));
+    const gw = (W - pl - pr) / n, bw = Math.min(46, gw / 3), Y = (v) => pt + (H - pt - pb) * (1 - v / max), base = H - pb;
+    const bars = data.map((d, i) => {
+      const cx = pl + gw * i + gw / 2;
+      const mk = (v, dx, solid) => v > 0 ? `<rect x="${cx + dx}" y="${Y(v)}" width="${bw}" height="${base - Y(v)}" fill="${colorOf(i)}" ${solid ? '' : `fill-opacity=".35" stroke="${colorOf(i)}" stroke-width="1.5"`}/><text x="${cx + dx + bw / 2}" y="${Y(v) - 5}" text-anchor="middle">${eur(v)}</text>` : '';
+      return mk(d.own, -bw - 2, true) + mk(d.rent, 2, false) + `<text x="${cx}" y="${H - 10}" text-anchor="middle" style="font-weight:700">${LETTERS[i]}</text>`;
+    }).join('');
+    return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Monthly cost of owning versus cold rent for each compared property"><line x1="${pl}" x2="${W - pr}" y1="${base}" y2="${base}" stroke="var(--line)"/>${bars}</svg>
+      <div class="legend"><span><svg width="14" height="14"><rect width="14" height="14" fill="var(--muted)"/></svg>Solid: monthly cost of owning (loan + ${cols.some((x) => x.l.type === 'house') ? 'ancillary/Hausgeld' : 'Hausgeld'} + maintenance)</span><span><svg width="14" height="14"><rect width="14" height="14" fill="var(--muted)" fill-opacity=".35" stroke="var(--muted)" stroke-width="1.5"/></svg>Light: expected cold rent (if entered)</span></div>`;
+  }
+
+  // slot selects, toggles, equity edits, actions
+  $('cmpSlots').addEventListener('change', (e) => {
+    const sel = e.target.closest('select[data-slot]'); if (!sel) return;
+    const i = +sel.dataset.slot, c = cmpState(), id = sel.value;
+    if (!id) { if (c.ids[i]) toggleCompare(c.ids[i], false); return; }
+    if (c.ids.includes(id) && c.ids[i] !== id) { toast('That property is already in the comparison.'); renderCompare(); return; }
+    if (c.ids[i]) { delete c.eq[c.ids[i]]; c.ids[i] = id; } else c.ids.push(id);
+    save(); renderCompare();
+  });
+  $('cmpSame').addEventListener('change', (e) => { store.compare.sameEquity = e.target.checked; save(); renderCompare(); });
+  $('cmpDiff').addEventListener('change', (e) => { store.compare.diff = e.target.checked; save(); renderCompare(); });
+  $('cmpClear').addEventListener('click', () => { store.compare.ids = []; store.compare.eq = {}; save(); updateCmpCounts(); renderCompare(); });
+  const parseNum = (s) => { const n = parseFloat(String(s).replace(/\s/g, '').replace(',', '.')); return Number.isFinite(n) && n >= 0 ? n : null; };
+  $('cmpTable').addEventListener('input', (e) => { // keep € and % of one column linked while typing
+    const t = e.target; if (!t.dataset || !t.dataset.eq) return;
+    const x = cmpColumns()[+t.dataset.i], price = x.a.price, v = parseNum(t.value), td = t.closest('td');
+    const other = td.querySelector(`input[data-eq="${t.dataset.eq === 'amount' ? 'pct' : 'amount'}"]`);
+    if (v == null || !(price > 0)) return;
+    other.value = t.dataset.eq === 'amount' ? r2(v / price * 100) : r2(price * v / 100);
+  });
+  $('cmpTable').addEventListener('change', (e) => { // commit the edit as this column's own equity
+    const t = e.target; if (!t.dataset || !t.dataset.eq) return;
+    const x = cmpColumns()[+t.dataset.i], v = parseNum(t.value);
+    if (v == null) { renderCompare(); return; }
+    store.compare.eq[x.id] = { mode: t.dataset.eq === 'amount' ? 'euro' : 'percent', value: v };
+    save(); renderCompare();
+  });
+  $('cmpTable').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-act]'); if (!b) return;
+    const x = cmpColumns()[+b.dataset.i]; if (!x) return;
+    if (b.dataset.act === 'remove') toggleCompare(x.id, false);
+    if (b.dataset.act === 'analyze') { store.pick = x.id; save(); showTab('analysis'); }
+    if (b.dataset.act === 'edit') openDialog(x.id);
+    if (b.dataset.act === 'eqreset') { delete store.compare.eq[x.id]; save(); renderCompare(); }
+  });
+  $('cmpPrint').addEventListener('click', () => window.print());
+  $('cmpCopy').addEventListener('click', async () => {
+    const cols = cmpColumns(); if (cols.length < 1) { toast('Nothing to copy yet. Add properties first.'); return; }
+    const m = cmpModel(cols), lines = [['', ...cols.map((x, i) => `${LETTERS[i]}: ${x.l.title}`)].join('\t')];
+    m.sections.forEach((s) => { lines.push(s.title.toUpperCase()); s.rows.forEach((r) => {
+      if (r.equity) lines.push(['Equity', ...cols.map((x) => `${eur(x.a.equity)} (${x.a.price > 0 ? r2(x.a.equity / x.a.price * 100) : '–'}%)`)].join('\t'));
+      else lines.push([r.label, ...r.cells.map((x) => x.text + (x.sub ? ` (${x.sub})` : ''))].join('\t'));
+    }); });
+    const text = lines.join('\n');
+    try { await navigator.clipboard.writeText(text); toast('Copied. Paste it into Excel, Sheets or an email.'); }
+    catch (err) { const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); toast('Copied. Paste it into Excel, Sheets or an email.'); } catch (e2) { toast('Copy failed. Use Print / save as PDF instead.'); } ta.remove(); }
+  });
 
   // ---------- Bundesbank rate ----------
   const BB_URL = 'https://api.statistiken.bundesbank.de/rest/data/BBIM1/M.DE.B.A2C.P.R.A.2250.EUR.N?lastNObservations=1&detail=dataonly';
@@ -614,9 +908,9 @@
 
   // ---------- init ----------
   loadSearch();
-  $('count').textContent = store.listings.length;
+  $('count').textContent = store.listings.length; updateCmpCounts();
   applyBundesbank(); renderRateInfo();
   const start = (location.hash || '').slice(1);
-  showTab(['search', 'shortlist', 'analysis'].includes(start) ? start : 'search');
+  showTab(['search', 'shortlist', 'analysis', 'compare'].includes(start) ? start : 'search');
   loadBundesbank();
 })();

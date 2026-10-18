@@ -1,6 +1,6 @@
 # Apartment Compass
 
-A small web app that helps compare **apartments to buy in Germany**: set your requirements, jump to the big property portals with the right filters, keep a shortlist, let an AI read an exposé PDF into the form, and then run **loan** and **rental-return** analyses on each apartment.
+A small web app that helps compare **apartments (and, occasionally, houses) to buy in Germany**: set your requirements, jump to the big property portals with the right filters, keep a shortlist, let an AI read an exposé PDF into the form, run **loan** and **rental-return** analyses, and **compare up to three properties side by side**.
 
 > **How this was made:** this project is **vibe coding**. It was built in conversation with an AI coding assistant (**Claude Code**, by Anthropic). The product owner described the idea, made the key decisions and tested the result. The AI wrote the code. It is **not a one-person hand-coded project**, and the code has had no independent security or code audit. See [How it was built](#how-it-was-built-vibe-coding-with-ai).
 
@@ -14,7 +14,8 @@ No backend, no accounts, no scraping. It is a static website (HTML, CSS, JavaScr
 |---|---|
 | **1 · Search** | Enter state, city, price, size and rooms. The app builds the search link for ImmoScout24, Immowelt and Kleinanzeigen and opens it in a new tab. |
 | **2 · Shortlist** | Add apartments manually or by **reading an exposé PDF with AI**. Search (from 2 characters), **Filter** (city, Stadtteil, sliders for price, size, cold rent total and per m², year built) and **Sort** (price, size, year built, net yield). |
-| **3 · Analysis** | Loan: monthly payment, remaining debt after the fixed period, repayment table and chart, buying costs by federal state. Return: gross/net yield, cash flow, return on equity, break-even rent. Also living-in cost, building and energy-certificate details. |
+| **3 · Analysis** | One property at a time. Loan: monthly payment, remaining debt after the fixed period, repayment table and chart, buying costs by federal state. Equity can be entered as an amount or a percentage (they stay linked). Return: gross/net yield, cash flow, return on equity, break-even rent. Also living-in cost, building and energy-certificate details, and **Add to comparison**. |
+| **4 · Compare** | Up to 3 properties side by side with the best value in each row highlighted, differences vs. A, shared or individual equity, a loan-balance chart, a cost-vs-rent chart, and export (print/PDF or copy as table). |
 
 The default interest rate is pulled live from the **Bundesbank** and can be edited.
 
@@ -22,7 +23,7 @@ The default interest rate is pulled live from the **Bundesbank** and can be edit
 
 ```mermaid
 flowchart TD
-    A["1 · Search tab<br/>enter price, size, rooms, location"] --> B["Open ImmoScout24 / Immowelt /<br/>Kleinanzeigen in new tabs"]
+    A["1 · Search tab<br/>property type, price, size, rooms, location"] --> B["Open ImmoScout24 / Immowelt /<br/>Kleinanzeigen in new tabs"]
     B --> C{"Found an<br/>interesting apartment?"}
     C -- "No" --> B
     C -- "Yes" --> D{"Do you have the<br/>exposé as a PDF?"}
@@ -33,7 +34,9 @@ flowchart TD
     G --> H["Save to shortlist"]
     H --> I["Search · Filter · Sort · Compare"]
     I --> J["3 · Analysis<br/>loan · return · building and energy details"]
-    J --> K{"Happy with the numbers?"}
+    J --> M["Add to comparison<br/>up to 3 properties"]
+    M --> N["4 · Compare<br/>side by side, charts, export"]
+    N --> K{"Happy with the numbers?"}
     K -- "No" --> B
     K -- "Yes" --> L["Export the shortlist<br/>and share it with a friend"]
 ```
@@ -58,7 +61,7 @@ The decisions below were made by the product owner in dialogue with the AI, and 
 |---|---|
 | Where do listings come from? | **No scraping.** Portals forbid automated access, and the legal risk is real (terms of use, database rights). The app only opens the portals' own search pages and works from the exposé the user brings back. |
 | How is the AI paid for? | The user's **own free Gemini API key**, kept in their browser. No shared key, no server, no cost to the owner. |
-| What may the AI read? | **Only apartment-for-sale PDFs.** Anything else is rejected. |
+| What may the AI read? | **Only PDFs about one apartment or house for sale.** Anything else is rejected. |
 | Who is in charge of the numbers? | The **human**, via a review screen before anything is saved. The AI only fills the form. |
 
 ## AI governance: how the AI is controlled
@@ -68,7 +71,7 @@ The AI is used for one narrow job: **reading an exposé PDF and proposing values
 | Principle | How it is implemented |
 |---|---|
 | **Human in the loop** | Extracted values open in an editable form. Nothing is saved until the user checks and clicks Save. A banner says "Filled in by AI… check every value". |
-| **Scope restriction** | The model must first classify the document. Only an apartment-for-sale document passes. Invoices, CVs, tax papers, rental ads, houses and land are rejected with the message "This is not a relevant document", and nothing is extracted. Documents that mix in unrelated content are rejected too. |
+| **Scope restriction** | The model must first classify the document. Only an apartment or single-family-house sale document passes. Invoices, CVs, tax papers, rental ads, whole apartment buildings, plots of land and commercial property are rejected with the message "This is not a relevant document", and nothing is extracted. Documents that mix in unrelated content are rejected too. |
 | **No invention** | The prompt allows only values explicitly stated in the document. Unknown fields stay empty and are highlighted. The AI never estimates rent. |
 | **Output validation** | Every number is range-checked (for example size 10 to 1000 m², price 10k to 30M €). Implausible values are dropped and flagged. Strings are length-limited and always rendered as plain text, never as HTML. |
 | **Prompt-injection defence** | The PDF is declared untrusted data in the system instruction. The model's answer is parsed as JSON and only known fields are read, so text hidden in a PDF cannot trigger other actions. |
@@ -133,7 +136,7 @@ index.html     page layout and dialogs
 styles.css     styling (light and dark mode, mobile friendly)
 js/calc.js     loan, buying costs, yield and cash-flow maths (pure functions)
 js/ai.js       Gemini exposé reader with the relevance gate and validation
-js/app.js      UI: search links, shortlist, filter/sort, analysis, settings
+js/app.js      UI: search links, shortlist, filter/sort, analysis, compare, settings
 ```
 
 ## Legal and disclaimers

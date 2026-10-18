@@ -23,8 +23,8 @@
   ].join(' ');
 
   const PROMPT = `Step 1 - classify the document.
-RELEVANT = a document about ONE residential apartment (Eigentumswohnung / condominium) offered for sale in Germany: a sales exposé or listing printout, a price sheet, or a Hausgeld/Wohngeld statement or energy certificate of that apartment. Normal exposé boilerplate (agent contact details, commission information, disclaimers, cancellation or privacy notices, neighbourhood and location descriptions) is allowed and counts as relevant.
-NOT RELEVANT = anything else, for example invoices, receipts, contracts unrelated to the purchase, bank or tax documents, CVs, letters, articles, rental advertisements, houses, land, commercial property, or any other topic.
+RELEVANT = a document about ONE residential property offered for sale in Germany, either an apartment (Eigentumswohnung / condominium) or a single-family house (Einfamilienhaus, Doppelhaushälfte, Reihenhaus): a sales exposé or listing printout, a price sheet, or a Hausgeld/Wohngeld statement or energy certificate of that property. Normal exposé boilerplate (agent contact details, commission information, disclaimers, cancellation or privacy notices, neighbourhood and location descriptions) is allowed and counts as relevant.
+NOT RELEVANT = anything else, for example invoices, receipts, contracts unrelated to the purchase, bank or tax documents, CVs, letters, articles, rental advertisements, apartment buildings sold as a whole, building plots or land only, commercial property, or any other topic.
 If the document is relevant but ALSO contains substantial unrelated material (other topics or other people's documents), set contains_unrelated_content to true.
 
 Step 2 - extract data, only if relevant. If it is not relevant, set is_apartment_document to false, explain briefly in rejection_reason, and set every other field to null.
@@ -35,6 +35,7 @@ JSON format:
   "is_apartment_document": boolean,
   "contains_unrelated_content": boolean,
   "rejection_reason": string or null,
+  "property_type": "apartment" or "house",
   "title": short descriptive title such as "3-room flat, Schwabing" or null,
   "district": string or null (the Stadtteil / neighbourhood name only, e.g. "Südstadt"; not the street),
   "city": string or null,
@@ -42,6 +43,7 @@ JSON format:
   "state_code": one of ${STATE_CODES.join(', ')} or null (the German federal state of the address),
   "purchase_price_eur": number or null,
   "living_area_sqm": number or null,
+  "plot_size_sqm": number or null (plot/land area, houses only),
   "rooms": number or null,
   "floor": string or null,
   "year_built": number or null,
@@ -65,7 +67,7 @@ JSON format:
   async function validateFile(file) {
     if (!file) throw new ReadError('nofile', 'Please choose a PDF file.');
     const looksPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
-    if (!looksPdf) throw new ReadError('type', 'Only PDF files are accepted. Please upload the apartment exposé as a PDF.');
+    if (!looksPdf) throw new ReadError('type', 'Only PDF files are accepted. Please upload the property exposé as a PDF.');
     if (file.size === 0) throw new ReadError('empty', 'This file is empty.');
     if (file.size > MAX_MB * 1024 * 1024) throw new ReadError('size', `This PDF is larger than ${MAX_MB} MB. Please upload a smaller version (for example the exposé without the extra attachments).`);
     const head = new Uint8Array(await file.slice(0, 5).arrayBuffer());
@@ -135,10 +137,10 @@ JSON format:
 
     if (j.is_apartment_document !== true) {
       const why = str(j.rejection_reason, 160);
-      throw new ReadError('irrelevant', 'This is not a relevant document. Only exposés and documents about an apartment for sale can be read here. Nothing was extracted.' + (why ? ' Reason: ' + why : ''));
+      throw new ReadError('irrelevant', 'This is not a relevant document. Only exposés and documents about an apartment or house for sale can be read here. Nothing was extracted.' + (why ? ' Reason: ' + why : ''));
     }
     if (j.contains_unrelated_content === true) {
-      throw new ReadError('irrelevant', 'This PDF contains content that is not related to the apartment, so it was rejected. Please upload only the apartment exposé or its price/Hausgeld pages.');
+      throw new ReadError('irrelevant', 'This PDF contains content that is not related to the property, so it was rejected. Please upload only the exposé or its price/cost pages.');
     }
 
     const warnings = [];
@@ -146,6 +148,8 @@ JSON format:
     const state = typeof j.state_code === 'string' && STATE_CODES.includes(j.state_code.toUpperCase()) ? j.state_code.toUpperCase() : null;
     const data = {
       title: str(j.title, 120),
+      propertyType: j.property_type === 'house' ? 'house' : 'apartment',
+      plot: pick('Plot size', j.plot_size_sqm, 10, 100000),
       district: str(j.district, 60), city: str(j.city, 60), postalCode: str(j.postal_code, 10), state,
       price: pick('Price', j.purchase_price_eur, 10000, 30000000),
       size: pick('Living area', j.living_area_sqm, 10, 1000),

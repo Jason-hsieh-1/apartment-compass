@@ -93,7 +93,9 @@
     const annualRent = num(l.rent) * 12;
     const effectiveRent = annualRent * (1 - num(a.vacancyPct) / 100);
     const nonRecoverable = Math.max(0, num(l.hausgeld) - num(l.umlagefaehig)) * 12;
-    const maintenance = num(a.maintPerSqm) * size;
+    // Houses usually need more upkeep than a flat in a managed building, so they have their own rate.
+    const maintRate = l.type === 'house' && a.maintPerSqmHouse != null ? a.maintPerSqmHouse : a.maintPerSqm;
+    const maintenance = num(maintRate) * size;
     const mgmt = num(a.mgmtPerMonth) * 12;
     const noi = effectiveRent - nonRecoverable - maintenance - mgmt;
     const cashflow = noi - annualDebt;
